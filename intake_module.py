@@ -199,11 +199,20 @@ class IntakeModule(ctk.CTkFrame):
         except: return 0.0
 
     def commit_order_to_firebase(self):
-        self.finish_btn.configure(state="disabled", text="UPLOADING...")
+        # 1. Disable the button and show loading text instantly
+        self.finish_btn.configure(state="disabled", text="UPLOADING TO CLOUD...")
+        
+        # 2. Push the heavy upload process to a background thread
+        import threading
+        threading.Thread(target=self.bg_commit, daemon=True).start()
+
+    def bg_commit(self):
         try:
             ds = datetime.now().strftime("%d_%m_%Y")
             sn, cn = self.order_meta['Supplier Name *'].replace(" ",""), self.order_meta.get('Courier Name *', 'Local').replace(" ","")
             oid = f"{ds}_{sn}_{cn}"
+            
+            # Master history record
             db.collection("orders_history").document(oid).set({"supplier": sn, "courier": cn, "timestamp": firestore.SERVER_TIMESTAMP, "meta": self.order_meta, "type": self.source_type})
             
             for item in self.current_order_items:
@@ -221,15 +230,27 @@ class IntakeModule(ctk.CTkFrame):
                 new_weight = float(item.get("Weight (g) *") or 0)
                 if new_weight > 0: update_data["weight_g"] = new_weight
                 
+                # Master product update
                 db.collection("products").document(bar).set(update_data, merge=True)
+                # Batch creation
                 db.collection("batches").add({"barcode": bar, "order_id": oid, "landed_cost_egp": lc, "qty_initial": int(item['Quantity *']), "qty_remaining": int(item['Quantity *']), "timestamp": firestore.SERVER_TIMESTAMP})
             
-            self.controller.show_main_menu()
-            if hasattr(self.controller, 'show_error_popup'):
-                self.controller.show_error_popup("Intake Order Committed Successfully!")
+            # 3. Safely tell the UI to show success
+            self.after(0, self.on_commit_success)
+            
         except Exception as e: 
-            self.finish_btn.configure(state="normal", text="RETRY COMMIT")
-            print(e)
+            # Safely tell the UI to show the error without freezing
+            self.after(0, lambda err=e: self.on_commit_fail(err))
+
+    def on_commit_success(self):
+        self.controller.show_main_menu()
+        if hasattr(self.controller, 'show_error_popup'):
+            self.controller.show_error_popup("Intake Order Committed Successfully!")
+
+    def on_commit_fail(self, error):
+        self.finish_btn.configure(state="normal", text="RETRY COMMIT")
+        if hasattr(self.controller, 'show_error_popup'):
+            self.controller.show_error_popup(f"Upload Failed (Check Internet/Auth): {str(error)}")
 
     def autofill_master_data(self, data):
         mapping = {"Name *": "name", "Shade *": "shade", "Brand *": "brand", "Weight (g) *": "weight_g", "Selling Price *": "selling_price"}
