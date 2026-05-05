@@ -2,6 +2,7 @@ import customtkinter as ctk
 from firebase_admin import firestore
 from datetime import datetime
 from firebase_config import db
+import threading # <--- IMPORTED THREADING TO PREVENT UI FREEZES
 
 class IntakeModule(ctk.CTkFrame):
     def __init__(self, parent, controller, source_type):
@@ -77,14 +78,12 @@ class IntakeModule(ctk.CTkFrame):
         nav_bar = ctk.CTkFrame(left_panel, height=50, fg_color="transparent"); nav_bar.pack(fill="x")
         ctk.CTkButton(nav_bar, text="← General Info", width=120, command=self.show_order_setup).pack(side="left")
         
-        # REMOVED the buggy trace_add("write", ...) from here
         self.scan_var = ctk.StringVar()
         
         ctk.CTkLabel(left_panel, text="SCAN QR / BARCODE", font=("Arial", 16, "bold")).pack(pady=(15,0))
         self.barcode_entry = ctk.CTkEntry(left_panel, textvariable=self.scan_var, width=500, height=50, font=("Arial", 22))
         self.barcode_entry.pack(pady=10); self.barcode_entry.focus()
         
-        # FIXED: Only search the database when the Enter key is pressed
         self.barcode_entry.bind('<Return>', self.live_search)
 
         self.status_note = ctk.CTkLabel(left_panel, text="Waiting for scan...", font=("Arial", 14)); self.status_note.pack()
@@ -107,7 +106,6 @@ class IntakeModule(ctk.CTkFrame):
 
     def setup_product_fields(self):
         self.prod_entries = {}
-        # FIXED: Changed "Selling Price (Optional)" to "Selling Price *"
         fields = ["Name *", "Shade *", "Brand *", "Quantity *", "Weight (g) *", "Selling Price *"]
         fields.append(f"Cost ({self.order_meta['Currency *']}) *" if self.source_type == "Global" else "Cost (EGP) *")
         for f in fields:
@@ -115,15 +113,35 @@ class IntakeModule(ctk.CTkFrame):
             ctk.CTkLabel(row, text=f, width=150, anchor="w").pack(side="left")
             ent = ctk.CTkEntry(row, width=350); ent.pack(side="right"); self.prod_entries[f] = ent
 
+    # --- THREADED SEARCH LOGIC (Fixes the Freeze) ---
     def live_search(self, *args):
         barcode = self.scan_var.get().strip()
-        # FIXED: Only checks the database if the box actually has characters after hitting enter
         if len(barcode) > 0 and not self.is_editing:
+            self.status_note.configure(text="Searching Database...", text_color="white")
+            # Push the network call to a background thread
+            threading.Thread(target=self.bg_fetch_product, args=(barcode,), daemon=True).start()
+
+    def bg_fetch_product(self, barcode):
+        try:
             doc = db.collection("products").document(barcode).get()
-            if doc.exists:
-                self.autofill_master_data(doc.to_dict())
-                self.status_note.configure(text="✔ Registered Product", text_color="green")
-            else: self.status_note.configure(text="✚ New Product Detected", text_color="#ffcc00")
+            # Safely send the result back to the main UI thread
+            self.after(0, lambda: self.process_search_result(doc))
+        except Exception as e:
+            self.after(0, lambda: self.status_note.configure(text=f"Network Error: {str(e)}", text_color="red"))
+
+    def process_search_result(self, doc):
+        if doc.exists:
+            self.autofill_master_data(doc.to_dict())
+            self.status_note.configure(text="✔ Registered Product", text_color="green")
+            # Automatically focus the Quantity box to speed up your workflow!
+            if "Quantity *" in self.prod_entries:
+                self.prod_entries["Quantity *"].focus()
+        else: 
+            self.status_note.configure(text="✚ New Product Detected", text_color="#ffcc00")
+            # Automatically focus the Name box for a new product
+            if "Name *" in self.prod_entries:
+                self.prod_entries["Name *"].focus()
+    # -------------------------------------------------
 
     def save_item_to_draft(self):
         barcode = self.scan_var.get().strip()
@@ -192,7 +210,6 @@ class IntakeModule(ctk.CTkFrame):
                 bar = item['Barcode']
                 lc = self.calculate_final_landed_cost(item)
                 
-                # FIXED: Selling price correctly cast to float and uploaded
                 update_data = {
                     "name": item['Name *'], 
                     "name_lower": item['Name *'].lower(), 
@@ -215,7 +232,6 @@ class IntakeModule(ctk.CTkFrame):
             print(e)
 
     def autofill_master_data(self, data):
-        # FIXED: Properly autofills the selling price if the product already exists
         mapping = {"Name *": "name", "Shade *": "shade", "Brand *": "brand", "Weight (g) *": "weight_g", "Selling Price *": "selling_price"}
         for ui, db_key in mapping.items():
             if ui in self.prod_entries:
