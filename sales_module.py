@@ -16,7 +16,6 @@ class SalesModule(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=55)
         self.grid_columnconfigure(1, weight=45)
 
-        # --- LEFT PANEL: CART & SMART SCANNER ---
         left_p = ctk.CTkFrame(self, fg_color="transparent")
         left_p.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
         
@@ -40,7 +39,6 @@ class SalesModule(ctk.CTkFrame):
         self.pos_cart_scroll = ctk.CTkScrollableFrame(left_p, fg_color="#1a1a1a")
         self.pos_cart_scroll.pack(fill="both", expand=True, pady=5)
 
-        # --- RIGHT PANEL: CUSTOMER INFO ---
         right_p = ctk.CTkFrame(self, fg_color="#2b2b2b")
         right_p.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
         
@@ -52,7 +50,7 @@ class SalesModule(ctk.CTkFrame):
         self.entries = {}
         fields = [
             ("Sales Channel *", ["Messenger", "Instagram", "Shopify", "Noon"]), 
-            ("Initial Status *", ["PENDING", "CONFIRMED"]), 
+            ("Initial Status *", ["ACTIVE", "CONFIRMED"]), # UPDATED
             ("Order ID (External) *", "Obligatory (e.g., Shopify#, Messenger)"), 
             ("Shipment Option *", ["Self Shipment", "Sharex", "Noon"]),
             ("Shipment ID", ""),
@@ -171,7 +169,6 @@ class SalesModule(ctk.CTkFrame):
             if not order_data["Address *"] or not order_data["Total Sale Price (EGP) *"] or not order_data["Customer Name *"] or not ext_id:
                 raise ValueError("Name, Ext ID, Address, and Total Sale Price are required!")
 
-            # 1. FIFO INVENTORY DECREMENT
             final_items = []
             for barcode, item in self.pos_cart.items():
                 needed_qty = item['qty']
@@ -201,13 +198,11 @@ class SalesModule(ctk.CTkFrame):
                         final_items.append({"barcode": barcode, "batch_id": b_id, "name": item['name'], "shade": item['shade'], "qty": b_qty, "selling_price": item['selling_price'], "landed_cost": b_data['landed_cost_egp']})
                         qty_to_subtract -= b_qty
             
-            # 2. GENERATE READABLE ID
             clean_name = "".join(e for e in order_data["Customer Name *"] if e.isalnum())
             total_val = float(order_data["Total Sale Price (EGP) *"])
             date_str = datetime.now().strftime("%y%m%d_%H%M")
             readable_id = f"{ext_id}_{clean_name}_{total_val}_{date_str}"
 
-            # 3. RECORD ORDER
             db.collection("sales_orders").document(readable_id).set({
                 "status": order_data["Initial Status *"], 
                 "channel": order_data["Sales Channel *"], 

@@ -32,8 +32,9 @@ class OrderManagerModule(ctk.CTkFrame):
         filter_f = ctk.CTkFrame(left_p, fg_color="transparent")
         filter_f.pack(fill="x", padx=10, pady=5)
         
-        self.filter_var = ctk.StringVar(value="ACTIVE")
-        status_opts = ["ACTIVE", "PENDING", "CONFIRMED", "SHIPPED", "COMPLETED", "RETURNED", "CANCELLED", "ALL"]
+        # CHANGED "ACTIVE" META-FILTER to "ALL ONGOING"
+        self.filter_var = ctk.StringVar(value="ALL ONGOING")
+        status_opts = ["ALL ONGOING", "ACTIVE", "CONFIRMED", "SHIPPED", "COMPLETED", "RETURNED", "CANCELLED", "ALL"]
         combo = ctk.CTkComboBox(filter_f, values=status_opts, variable=self.filter_var, command=lambda e: self.load_orders())
         combo.pack(fill="x", pady=2)
 
@@ -63,8 +64,8 @@ class OrderManagerModule(ctk.CTkFrame):
         for o in all_orders:
             data = o.to_dict()
             status = data.get("status", "")
-            if f_status == "ACTIVE" and status in ["COMPLETED", "CANCELLED", "RETURNED"]: continue
-            if f_status not in ["ALL", "ACTIVE"] and status != f_status: continue
+            if f_status == "ALL ONGOING" and status in ["COMPLETED", "CANCELLED", "RETURNED"]: continue
+            if f_status not in ["ALL", "ALL ONGOING"] and status != f_status: continue
             
             search_str = f"{o.id} {data.get('customer_name','')} {data.get('customer_phone','')}".lower()
             if q_search and q_search not in search_str: continue
@@ -122,7 +123,7 @@ class OrderManagerModule(ctk.CTkFrame):
             add_ent.bind('<Return>', lambda e: self.search_and_add_item())
             ctk.CTkButton(add_f, text="Search & Add", width=100, fg_color="#1f538d", command=self.search_and_add_item).pack(side="left", padx=5)
 
-            ctk.CTkButton(self.details_container, text="UPDATE ORDER ITEMS (Save Changes)", fg_color="#2e7d32", height=40, font=("Arial", 14, "bold"),
+            ctk.CTkButton(self.details_container, text="UPDATE ORDER ITEMS & PRICE (Save Changes)", fg_color="#2e7d32", height=40, font=("Arial", 14, "bold"),
                           command=self.update_order_items).pack(fill="x", pady=10)
 
         # 3. ACTION BUTTONS (STATE MACHINE)
@@ -133,9 +134,9 @@ class OrderManagerModule(ctk.CTkFrame):
         stat_f.pack(fill="x", pady=5)
         ctk.CTkLabel(stat_f, text="Current Status:").pack(side="left", padx=5)
         
-        # ONE-WAY STATE LOGIC
+        # ONE-WAY STATE LOGIC (ACTIVE -> CONFIRMED -> SHIPPED)
         allowed_states = [current_status]
-        if current_status == "PENDING": allowed_states = ["PENDING", "CONFIRMED", "SHIPPED"]
+        if current_status == "ACTIVE": allowed_states = ["ACTIVE", "CONFIRMED", "SHIPPED"]
         elif current_status == "CONFIRMED": allowed_states = ["CONFIRMED", "SHIPPED"]
         elif current_status == "SHIPPED": allowed_states = ["SHIPPED"]
 
@@ -168,7 +169,7 @@ class OrderManagerModule(ctk.CTkFrame):
             btn_complete.pack_forget()
             if current_status == "COMPLETED":
                 btn_rma.pack(side="left", expand=True, padx=2)
-        elif current_status == "PENDING":
+        elif current_status == "ACTIVE":
             btn_return.configure(state="disabled")
             btn_complete.configure(state="disabled")
         else:
@@ -179,11 +180,34 @@ class OrderManagerModule(ctk.CTkFrame):
         for barcode, item in self.edit_cart.items():
             f = ctk.CTkFrame(self.items_scroll, fg_color="#333")
             f.pack(fill="x", pady=2)
-            if not is_locked: ctk.CTkButton(f, text="-", width=30, command=lambda b=barcode: self.change_qty(b, -1)).pack(side="left", padx=5, pady=5)
+            
+            if not is_locked: 
+                ctk.CTkButton(f, text="-", width=30, command=lambda b=barcode: self.change_qty(b, -1)).pack(side="left", padx=5, pady=5)
+            
             ctk.CTkLabel(f, text=str(item['qty']), width=30, font=("Arial", 14, "bold")).pack(side="left", padx=5)
-            if not is_locked: ctk.CTkButton(f, text="+", width=30, command=lambda b=barcode: self.change_qty(b, 1)).pack(side="left", padx=5)
-            ctk.CTkLabel(f, text=f"{item['name']} | {item['shade']} @ {item['selling_price']} EGP", justify="left").pack(side="left", padx=15)
-            if not is_locked: ctk.CTkButton(f, text="✕", width=30, fg_color="#a32e2e", command=lambda b=barcode: self.remove_from_edit(b)).pack(side="right", padx=10)
+            
+            if not is_locked: 
+                ctk.CTkButton(f, text="+", width=30, command=lambda b=barcode: self.change_qty(b, 1)).pack(side="left", padx=5)
+            
+            ctk.CTkLabel(f, text=f"{item['name']} | {item['shade']}", width=180, anchor="w").pack(side="left", padx=15)
+            
+            if not is_locked:
+                # EDITABLE PRICE FIELD ADDED
+                price_var = ctk.StringVar(value=str(item['selling_price']))
+                price_ent = ctk.CTkEntry(f, textvariable=price_var, width=70)
+                price_ent.pack(side="left", padx=5)
+                ctk.CTkLabel(f, text="EGP").pack(side="left")
+                price_var.trace_add("write", lambda *args, b=barcode, pv=price_var: self.update_cart_price(b, pv))
+                
+                ctk.CTkButton(f, text="✕", width=30, fg_color="#a32e2e", command=lambda b=barcode: self.remove_from_edit(b)).pack(side="right", padx=10)
+            else:
+                ctk.CTkLabel(f, text=f"@ {item['selling_price']} EGP", justify="left").pack(side="left", padx=5)
+
+    def update_cart_price(self, barcode, string_var):
+        val = string_var.get()
+        try:
+            self.edit_cart[barcode]['selling_price'] = float(val) if val else 0.0
+        except ValueError: pass
 
     def change_qty(self, barcode, delta):
         new_qty = self.edit_cart[barcode]['qty'] + delta
@@ -330,10 +354,8 @@ class OrderManagerModule(ctk.CTkFrame):
                     if condition == "Restock":
                         if b_id: db.collection("batches").document(b_id).update({"qty_remaining": firestore.Increment(qty)})
                     else:
-                        # Add landed cost to shrinkage bucket
                         defective_loss += float(item.get('landed_cost', 0)) * qty
 
-                # CORE CONTRA-REVENUE ACCOUNTING LOGIC
                 update_dict = {
                     "status": "RETURNED", 
                     "returned_at": firestore.SERVER_TIMESTAMP,
@@ -341,11 +363,8 @@ class OrderManagerModule(ctk.CTkFrame):
                 }
                 
                 if is_rma:
-                    # An RMA is a partial/full refund. The revenue reversed is what you refunded.
                     update_dict["sales_return_value"] = entered_amt
                 else:
-                    # A pre-completion return. The revenue reversed is the entire order value.
-                    # The fee you paid the courier is stored in delivery_loss.
                     update_dict["sales_return_value"] = data.get('total_sale_value', 0)
                     update_dict["delivery_loss"] = entered_amt
 

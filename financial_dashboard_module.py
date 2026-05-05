@@ -63,7 +63,7 @@ class FinancialDashboardModule(ctk.CTkFrame):
             for o in all_orders:
                 data = o.to_dict()
                 status = data.get("status", "")
-                if status in ["PENDING", "CANCELLED"]: continue
+                if status in ["ACTIVE", "CANCELLED"]: continue
 
                 total_val = float(data.get("total_sale_value", 0))
                 deposit = float(data.get("deposit_paid", 0))

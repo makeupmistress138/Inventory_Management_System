@@ -2,7 +2,7 @@ import customtkinter as ctk
 from firebase_admin import firestore
 from datetime import datetime
 from firebase_config import db
-import threading # <--- IMPORTED THREADING TO PREVENT UI FREEZES
+import threading 
 
 class IntakeModule(ctk.CTkFrame):
     def __init__(self, parent, controller, source_type):
@@ -13,6 +13,7 @@ class IntakeModule(ctk.CTkFrame):
         self.is_editing = None 
         self.current_order_items = [] 
         self.order_meta = {} 
+        self._search_timer = None # Timer for scanner debounce
 
         self.show_order_setup()
 
@@ -84,7 +85,8 @@ class IntakeModule(ctk.CTkFrame):
         self.barcode_entry = ctk.CTkEntry(left_panel, textvariable=self.scan_var, width=500, height=50, font=("Arial", 22))
         self.barcode_entry.pack(pady=10); self.barcode_entry.focus()
         
-        self.barcode_entry.bind('<Return>', self.live_search)
+        # ADDED BACK TRACE WITH DEBOUNCE
+        self.scan_var.trace_add("write", self.live_search)
 
         self.status_note = ctk.CTkLabel(left_panel, text="Waiting for scan...", font=("Arial", 14)); self.status_note.pack()
         
@@ -113,18 +115,23 @@ class IntakeModule(ctk.CTkFrame):
             ctk.CTkLabel(row, text=f, width=150, anchor="w").pack(side="left")
             ent = ctk.CTkEntry(row, width=350); ent.pack(side="right"); self.prod_entries[f] = ent
 
-    # --- THREADED SEARCH LOGIC (Fixes the Freeze) ---
+    # --- DEBOUNCED SEARCH LOGIC ---
     def live_search(self, *args):
         barcode = self.scan_var.get().strip()
-        if len(barcode) > 0 and not self.is_editing:
-            self.status_note.configure(text="Searching Database...", text_color="white")
-            # Push the network call to a background thread
-            threading.Thread(target=self.bg_fetch_product, args=(barcode,), daemon=True).start()
+        if len(barcode) >= 4 and not self.is_editing:
+            # Cancel the previous timer if user/scanner is still typing
+            if self._search_timer:
+                self.after_cancel(self._search_timer)
+            # Wait 300ms after the LAST character before searching
+            self._search_timer = self.after(300, lambda: self.execute_search(barcode))
+
+    def execute_search(self, barcode):
+        self.status_note.configure(text="Searching Database...", text_color="white")
+        threading.Thread(target=self.bg_fetch_product, args=(barcode,), daemon=True).start()
 
     def bg_fetch_product(self, barcode):
         try:
             doc = db.collection("products").document(barcode).get()
-            # Safely send the result back to the main UI thread
             self.after(0, lambda: self.process_search_result(doc))
         except Exception as e:
             self.after(0, lambda: self.status_note.configure(text=f"Network Error: {str(e)}", text_color="red"))
@@ -133,14 +140,10 @@ class IntakeModule(ctk.CTkFrame):
         if doc.exists:
             self.autofill_master_data(doc.to_dict())
             self.status_note.configure(text="✔ Registered Product", text_color="green")
-            # Automatically focus the Quantity box to speed up your workflow!
-            if "Quantity *" in self.prod_entries:
-                self.prod_entries["Quantity *"].focus()
+            if "Quantity *" in self.prod_entries: self.prod_entries["Quantity *"].focus()
         else: 
             self.status_note.configure(text="✚ New Product Detected", text_color="#ffcc00")
-            # Automatically focus the Name box for a new product
-            if "Name *" in self.prod_entries:
-                self.prod_entries["Name *"].focus()
+            if "Name *" in self.prod_entries: self.prod_entries["Name *"].focus()
     # -------------------------------------------------
 
     def save_item_to_draft(self):
@@ -199,11 +202,7 @@ class IntakeModule(ctk.CTkFrame):
         except: return 0.0
 
     def commit_order_to_firebase(self):
-        # 1. Disable the button and show loading text instantly
         self.finish_btn.configure(state="disabled", text="UPLOADING TO CLOUD...")
-        
-        # 2. Push the heavy upload process to a background thread
-        import threading
         threading.Thread(target=self.bg_commit, daemon=True).start()
 
     def bg_commit(self):
@@ -211,8 +210,6 @@ class IntakeModule(ctk.CTkFrame):
             ds = datetime.now().strftime("%d_%m_%Y")
             sn, cn = self.order_meta['Supplier Name *'].replace(" ",""), self.order_meta.get('Courier Name *', 'Local').replace(" ","")
             oid = f"{ds}_{sn}_{cn}"
-            
-            # Master history record
             db.collection("orders_history").document(oid).set({"supplier": sn, "courier": cn, "timestamp": firestore.SERVER_TIMESTAMP, "meta": self.order_meta, "type": self.source_type})
             
             for item in self.current_order_items:
@@ -230,16 +227,11 @@ class IntakeModule(ctk.CTkFrame):
                 new_weight = float(item.get("Weight (g) *") or 0)
                 if new_weight > 0: update_data["weight_g"] = new_weight
                 
-                # Master product update
                 db.collection("products").document(bar).set(update_data, merge=True)
-                # Batch creation
                 db.collection("batches").add({"barcode": bar, "order_id": oid, "landed_cost_egp": lc, "qty_initial": int(item['Quantity *']), "qty_remaining": int(item['Quantity *']), "timestamp": firestore.SERVER_TIMESTAMP})
             
-            # 3. Safely tell the UI to show success
             self.after(0, self.on_commit_success)
-            
         except Exception as e: 
-            # Safely tell the UI to show the error without freezing
             self.after(0, lambda err=e: self.on_commit_fail(err))
 
     def on_commit_success(self):
@@ -250,7 +242,7 @@ class IntakeModule(ctk.CTkFrame):
     def on_commit_fail(self, error):
         self.finish_btn.configure(state="normal", text="RETRY COMMIT")
         if hasattr(self.controller, 'show_error_popup'):
-            self.controller.show_error_popup(f"Upload Failed (Check Internet/Auth): {str(error)}")
+            self.controller.show_error_popup(f"Upload Failed: {str(error)}")
 
     def autofill_master_data(self, data):
         mapping = {"Name *": "name", "Shade *": "shade", "Brand *": "brand", "Weight (g) *": "weight_g", "Selling Price *": "selling_price"}
