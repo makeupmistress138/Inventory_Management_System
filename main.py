@@ -6,7 +6,7 @@ from datetime import datetime
 from intake_module import IntakeModule
 from sales_module import SalesModule
 from order_manager_module import OrderManagerModule
-from financial_dashboard_module import FinancialDashboardModule # <--- NEW IMPORT
+from financial_dashboard_module import FinancialDashboardModule
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -16,6 +16,13 @@ class MainApp(ctk.CTk):
         super().__init__()
         self.title("PRO Cosmetic IMS - Master Hub")
         self.geometry("1400x900")
+        
+        # --- FULL SCREEN MAXIMIZATION ---
+        try:
+            self.state('zoomed') # Works on Windows
+        except:
+            self.attributes('-zoomed', True) # Fallback for Mac/Linux
+            
         self.container = ctk.CTkFrame(self)
         self.container.pack(side="top", fill="both", expand=True)
         self.show_main_menu()
@@ -41,7 +48,7 @@ class MainApp(ctk.CTk):
         if module_name == "Intake": view = IntakeModule(self.container, self, source_type)
         elif module_name == "Sales": view = SalesModule(self.container, self)
         elif module_name == "Manager": view = OrderManagerModule(self.container, self)
-        elif module_name == "Finance": view = FinancialDashboardModule(self.container, self) # <--- NEW ROUTE
+        elif module_name == "Finance": view = FinancialDashboardModule(self.container, self)
         view.pack(fill="both", expand=True)
 
     def show_error_popup(self, msg):

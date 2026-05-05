@@ -50,7 +50,7 @@ class SalesModule(ctk.CTkFrame):
         self.entries = {}
         fields = [
             ("Sales Channel *", ["Messenger", "Instagram", "Shopify", "Noon"]), 
-            ("Initial Status *", ["ACTIVE", "CONFIRMED"]), # UPDATED
+            ("Initial Status *", ["ACTIVE", "SHIPPED"]), # <--- STREAMLINED STATUSES
             ("Order ID (External) *", "Obligatory (e.g., Shopify#, Messenger)"), 
             ("Shipment Option *", ["Self Shipment", "Sharex", "Noon"]),
             ("Shipment ID", ""),
@@ -81,12 +81,10 @@ class SalesModule(ctk.CTkFrame):
         query = self.pos_scan_var.get().strip().lower()
         self.pos_scan_var.set("")
         if not query: return
-        
         doc = db.collection("products").document(query).get()
         if doc.exists:
             self.add_to_dict(query, doc.to_dict())
             return
-        
         docs = db.collection("products").where(filter=FieldFilter("name_lower", ">=", query)).where(filter=FieldFilter("name_lower", "<=", query + "\uf8ff")).limit(10).get()
         if not docs:
             if hasattr(self.controller, 'show_error_popup'): self.controller.show_error_popup("No product found.")
@@ -158,11 +156,9 @@ class SalesModule(ctk.CTkFrame):
         if not self.pos_cart:
             if hasattr(self.controller, 'show_error_popup'): self.controller.show_error_popup("Cart is empty!")
             return
-
         try:
             self.checkout_btn.configure(state="disabled", text="PROCESSING...")
             order_data = {k: v.get().strip() for k, v in self.entries.items()}
-            
             phone = order_data["Customer Phone *"]
             ext_id = order_data["Order ID (External) *"]
             if not phone.isdigit() or len(phone) != 11: raise ValueError("Phone number must be exactly 11 digits!")
@@ -220,9 +216,7 @@ class SalesModule(ctk.CTkFrame):
                 "created_at": firestore.SERVER_TIMESTAMP,
                 "completed_at": None
             })
-            
             self.controller.show_main_menu()
-            
         except Exception as e: 
             self.checkout_btn.configure(state="normal", text="CREATE ORDER")
             if hasattr(self.controller, 'show_error_popup'): self.controller.show_error_popup(str(e))
