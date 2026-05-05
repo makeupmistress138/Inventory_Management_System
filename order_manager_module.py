@@ -33,7 +33,7 @@ class OrderManagerModule(ctk.CTkFrame):
         filter_f.pack(fill="x", padx=10, pady=5)
         
         self.filter_var = ctk.StringVar(value="ACTIVE")
-        status_opts = ["ACTIVE", "PENDING", "CONFIRMED", "SHIPPED", "DELIVERED", "COMPLETED", "RETURNED", "CANCELLED", "ALL"]
+        status_opts = ["ACTIVE", "PENDING", "CONFIRMED", "SHIPPED", "COMPLETED", "RETURNED", "CANCELLED", "ALL"]
         combo = ctk.CTkComboBox(filter_f, values=status_opts, variable=self.filter_var, command=lambda e: self.load_orders())
         combo.pack(fill="x", pady=2)
 
@@ -101,7 +101,8 @@ class OrderManagerModule(ctk.CTkFrame):
         ctk.CTkLabel(header, text=data.get('customer_name', 'No Name'), font=("Arial", 20, "bold")).pack(anchor="w", padx=10)
         info_text = f"Phone: {data.get('customer_phone')}  |  Address: {data.get('address')}\n" \
                     f"Channel: {data.get('channel')}  |  Shipment: {data.get('shipment_option')} (ID: {data.get('shipment_id', 'N/A')})\n" \
-                    f"Total: {data.get('total_sale_value')} EGP  |  Deposit: {data.get('deposit_paid')} EGP"
+                    f"Total: {data.get('total_sale_value')} EGP  |  Deposit: {data.get('deposit_paid')} EGP\n" \
+                    f"Notes: {data.get('notes', 'None')}"
         ctk.CTkLabel(header, text=info_text, justify="left", font=("Arial", 14)).pack(anchor="w", padx=10, pady=10)
 
         is_locked = current_status in ["COMPLETED", "CANCELLED", "RETURNED"]
@@ -134,10 +135,9 @@ class OrderManagerModule(ctk.CTkFrame):
         
         # ONE-WAY STATE LOGIC
         allowed_states = [current_status]
-        if current_status == "PENDING": allowed_states = ["PENDING", "CONFIRMED", "SHIPPED", "DELIVERED"]
-        elif current_status == "CONFIRMED": allowed_states = ["CONFIRMED", "SHIPPED", "DELIVERED"]
-        elif current_status == "SHIPPED": allowed_states = ["SHIPPED", "DELIVERED"]
-        elif current_status == "DELIVERED": allowed_states = ["DELIVERED"]
+        if current_status == "PENDING": allowed_states = ["PENDING", "CONFIRMED", "SHIPPED"]
+        elif current_status == "CONFIRMED": allowed_states = ["CONFIRMED", "SHIPPED"]
+        elif current_status == "SHIPPED": allowed_states = ["SHIPPED"]
 
         self.status_var = ctk.StringVar(value=current_status)
         combo = ctk.CTkComboBox(stat_f, values=allowed_states, variable=self.status_var, width=150)
@@ -291,13 +291,15 @@ class OrderManagerModule(ctk.CTkFrame):
         self.refresh_current_order()
 
     def process_return(self, is_rma=False):
-        items = self.selected_order_data.get('items', [])
+        data = self.selected_order_data
+        items = data.get('items', [])
+        
         popup = ctk.CTkToplevel(self)
-        popup.title("Post-Completion RMA" if is_rma else "Process Return / Loss")
+        popup.title("Post-Completion RMA" if is_rma else "Process Pre-Completion Return")
         popup.geometry("600x500")
         popup.attributes("-topmost", True)
         
-        lbl_txt = "Enter Refund Amount to Client (EGP):" if is_rma else "Enter incurred Courier losses (EGP):"
+        lbl_txt = "Enter Refund Amount to Client (EGP):" if is_rma else "Enter Courier penalty/loss (EGP):"
         ctk.CTkLabel(popup, text=lbl_txt, font=("Arial", 16)).pack(pady=(10, 0))
         amt_var = ctk.StringVar(value="0")
         ctk.CTkEntry(popup, textvariable=amt_var, justify="center").pack(pady=10)
@@ -328,19 +330,28 @@ class OrderManagerModule(ctk.CTkFrame):
                     if condition == "Restock":
                         if b_id: db.collection("batches").document(b_id).update({"qty_remaining": firestore.Increment(qty)})
                     else:
-                        # Write-off: calculate landed cost loss
+                        # Add landed cost to shrinkage bucket
                         defective_loss += float(item.get('landed_cost', 0)) * qty
 
-                update_dict = {"status": "RETURNED", "defective_loss": defective_loss}
+                # CORE CONTRA-REVENUE ACCOUNTING LOGIC
+                update_dict = {
+                    "status": "RETURNED", 
+                    "returned_at": firestore.SERVER_TIMESTAMP,
+                    "defective_loss": defective_loss
+                }
                 
                 if is_rma:
-                    update_dict["rma_refund"] = entered_amt
+                    # An RMA is a partial/full refund. The revenue reversed is what you refunded.
+                    update_dict["sales_return_value"] = entered_amt
                 else:
-                    update_dict["return_fees"] = entered_amt
+                    # A pre-completion return. The revenue reversed is the entire order value.
+                    # The fee you paid the courier is stored in delivery_loss.
+                    update_dict["sales_return_value"] = data.get('total_sale_value', 0)
+                    update_dict["delivery_loss"] = entered_amt
 
                 db.collection("sales_orders").document(self.selected_order_id).update(update_dict)
                 popup.destroy()
-                self.controller.show_error_popup("Return Processed Successfully.")
+                self.controller.show_error_popup("Return Processed. Financial Ledgers updated.")
                 self.refresh_current_order()
             except ValueError: pass
 

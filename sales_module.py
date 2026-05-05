@@ -12,7 +12,6 @@ class SalesModule(ctk.CTkFrame):
         self.setup_ui()
 
     def setup_ui(self):
-        # Force the row to stretch and fill the screen
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=55)
         self.grid_columnconfigure(1, weight=45)
@@ -53,7 +52,7 @@ class SalesModule(ctk.CTkFrame):
         self.entries = {}
         fields = [
             ("Sales Channel *", ["Messenger", "Instagram", "Shopify", "Noon"]), 
-            ("Initial Status *", ["PENDING", "CONFIRMED"]), # RESTRICTED TO PENDING/CONFIRMED
+            ("Initial Status *", ["PENDING", "CONFIRMED"]), 
             ("Order ID (External) *", "Obligatory (e.g., Shopify#, Messenger)"), 
             ("Shipment Option *", ["Self Shipment", "Sharex", "Noon"]),
             ("Shipment ID", ""),
