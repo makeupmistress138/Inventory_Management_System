@@ -20,7 +20,6 @@ class OrderManagerModule(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=35)
         self.grid_columnconfigure(1, weight=65)
 
-        # --- LEFT PANEL: LIST & FILTERS ---
         left_p = ctk.CTkFrame(self, fg_color="#1a1a1a")
         left_p.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         
@@ -45,7 +44,6 @@ class OrderManagerModule(ctk.CTkFrame):
         self.order_list_scroll = ctk.CTkScrollableFrame(left_p, fg_color="transparent")
         self.order_list_scroll.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # --- RIGHT PANEL: DETAILS ---
         self.right_p = ctk.CTkFrame(self, fg_color="#2b2b2b")
         self.right_p.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
         self.details_container = ctk.CTkFrame(self.right_p, fg_color="transparent")
@@ -93,7 +91,6 @@ class OrderManagerModule(ctk.CTkFrame):
                 self.edit_cart[bc] = {"name": item['name'], "shade": item.get('shade', ''), "qty": 0, "selling_price": item.get('selling_price', 0.0)}
             self.edit_cart[bc]['qty'] += item.get('qty', 0)
 
-        # 1. HEADER
         header = ctk.CTkFrame(self.details_container, fg_color="#1a1a1a", corner_radius=10)
         header.pack(fill="x", pady=(0, 10))
         
@@ -105,10 +102,10 @@ class OrderManagerModule(ctk.CTkFrame):
                     f"Notes: {data.get('notes', 'None')}"
         ctk.CTkLabel(header, text=info_text, justify="left", font=("Arial", 14)).pack(anchor="w", padx=10, pady=10)
 
-        is_locked = current_status in ["COMPLETED", "CANCELLED", "RETURNED"]
+        # CORE CHANGE: SHIPPED IS NOW LOCKED FOR EDITS
+        is_locked = current_status in ["SHIPPED", "COMPLETED", "CANCELLED", "RETURNED"]
 
-        # 2. ITEMS SCROLL
-        ctk.CTkLabel(self.details_container, text="Draft Edit Cart (Click Update to Save):" if not is_locked else "Final Order Items:", font=("Arial", 16, "bold")).pack(anchor="w")
+        ctk.CTkLabel(self.details_container, text="Draft Edit Cart (Click Update to Save):" if not is_locked else "Final Order Items (LOCKED):", font=("Arial", 16, "bold")).pack(anchor="w")
         self.items_scroll = ctk.CTkScrollableFrame(self.details_container, fg_color="transparent")
         self.items_scroll.pack(fill="both", expand=True, pady=5)
         self.draw_edit_cart(is_locked)
@@ -122,7 +119,6 @@ class OrderManagerModule(ctk.CTkFrame):
             add_ent.bind('<Return>', lambda e: self.search_and_add_item())
             ctk.CTkButton(add_f, text="Search & Add", width=100, fg_color="#1f538d", command=self.search_and_add_item).pack(side="left", padx=5)
 
-            # EDITABLE DEPOSIT FIELD
             dep_f = ctk.CTkFrame(self.details_container, fg_color="transparent")
             dep_f.pack(fill="x", pady=5)
             ctk.CTkLabel(dep_f, text="Deposit Paid (EGP):", font=("Arial", 14, "bold")).pack(side="left", padx=5)
@@ -134,7 +130,6 @@ class OrderManagerModule(ctk.CTkFrame):
         else:
             ctk.CTkLabel(self.details_container, text=f"Locked Deposit Paid: {data.get('deposit_paid', 0)} EGP", font=("Arial", 14, "bold")).pack(anchor="w", pady=5)
 
-        # 3. ACTION BUTTONS
         actions_f = ctk.CTkFrame(self.details_container, fg_color="transparent")
         actions_f.pack(fill="x", pady=10)
 
@@ -142,7 +137,6 @@ class OrderManagerModule(ctk.CTkFrame):
         stat_f.pack(fill="x", pady=5)
         ctk.CTkLabel(stat_f, text="Current Status:").pack(side="left", padx=5)
         
-        # ACTIVE -> SHIPPED -> COMPLETED
         allowed_states = [current_status]
         if current_status == "ACTIVE": allowed_states = ["ACTIVE", "SHIPPED"]
         elif current_status == "SHIPPED": allowed_states = ["SHIPPED"]
@@ -167,8 +161,7 @@ class OrderManagerModule(ctk.CTkFrame):
 
         btn_rma = ctk.CTkButton(bot_f, text="START RMA (Refund)", fg_color="#8e24aa", command=lambda: self.process_return(is_rma=True))
 
-        # Guardrails
-        if is_locked:
+        if current_status in ["COMPLETED", "CANCELLED", "RETURNED"]:
             combo.configure(state="disabled")
             btn_stat.configure(state="disabled")
             btn_cancel.pack_forget()
@@ -314,7 +307,6 @@ class OrderManagerModule(ctk.CTkFrame):
         self.controller.show_error_popup("Order Cancelled. Stock restored.")
         self.refresh_current_order()
 
-    # --- PARTIAL RMA / RETURN LOGIC ---
     def process_return(self, is_rma=False):
         data = self.selected_order_data
         items = data.get('items', [])
@@ -340,7 +332,7 @@ class OrderManagerModule(ctk.CTkFrame):
             
             ctk.CTkLabel(f, text=f"Max({item['qty']})").pack(side="left", padx=5)
             
-            qty_var = ctk.StringVar(value="0") # Default return 0
+            qty_var = ctk.StringVar(value="0") 
             ctk.CTkEntry(f, textvariable=qty_var, width=40).pack(side="left", padx=5)
             
             ctk.CTkLabel(f, text=f"{item['name']}").pack(side="left", padx=10, pady=5)
@@ -356,7 +348,6 @@ class OrderManagerModule(ctk.CTkFrame):
                 defective_loss_inc = 0.0
                 new_items_array = []
                 
-                # Loop to process partial item logic
                 for item, qty_var, cond_var in return_rows:
                     ret_qty = int(qty_var.get())
                     orig_qty = int(item.get('qty', 0))
@@ -370,14 +361,12 @@ class OrderManagerModule(ctk.CTkFrame):
                         else:
                             defective_loss_inc += float(item.get('landed_cost', 0)) * ret_qty
 
-                    # Deduct the returned qty from the item array representing what the client still owns
                     remaining_qty = orig_qty - ret_qty
                     if remaining_qty > 0:
                         updated_item = item.copy()
                         updated_item['qty'] = remaining_qty
                         new_items_array.append(updated_item)
 
-                # Prepare Database Updates
                 update_dict = {
                     "items": new_items_array,
                     "defective_loss": firestore.Increment(defective_loss_inc)
@@ -386,9 +375,9 @@ class OrderManagerModule(ctk.CTkFrame):
                 if is_rma:
                     update_dict["rma_refund"] = firestore.Increment(entered_amt)
                 else:
-                    update_dict["sales_return_value"] = firestore.Increment(entered_amt) # Using this field for pre-completion fees
+                    update_dict["sales_return_value"] = firestore.Increment(data.get('total_sale_value', 0)) 
+                    update_dict["delivery_loss"] = firestore.Increment(entered_amt)
 
-                # If ALL items were returned (array is empty), mark status as RETURNED. Else leave it alone (Partial Return)
                 if len(new_items_array) == 0:
                     update_dict["status"] = "RETURNED"
                     update_dict["returned_at"] = firestore.SERVER_TIMESTAMP
@@ -398,7 +387,7 @@ class OrderManagerModule(ctk.CTkFrame):
                 self.controller.show_error_popup("Return Processed. Financial Ledgers updated.")
                 self.refresh_current_order()
             except ValueError as e: 
-                print(e) # Ignore blank inputs
+                print(e)
 
         ctk.CTkButton(popup, text="CONFIRM PARTIAL/FULL RETURN", fg_color="#c27b1f", command=confirm).pack(pady=10)
 

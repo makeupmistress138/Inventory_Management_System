@@ -17,11 +17,11 @@ class MainApp(ctk.CTk):
         self.title("PRO Cosmetic IMS - Master Hub")
         self.geometry("1400x900")
         
-        # --- FULL SCREEN MAXIMIZATION ---
+        # --- GUARANTEED FULL SCREEN ---
         try:
-            self.state('zoomed') # Works on Windows
+            self.after(0, lambda: self.state('zoomed'))
         except:
-            self.attributes('-zoomed', True) # Fallback for Mac/Linux
+            self.attributes('-zoomed', True)
             
         self.container = ctk.CTkFrame(self)
         self.container.pack(side="top", fill="both", expand=True)
