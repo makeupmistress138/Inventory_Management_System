@@ -13,7 +13,6 @@ class IntakeModule(ctk.CTkFrame):
         self.current_order_items = [] 
         self.order_meta = {} 
 
-        # Launch directly into the setup screen based on the button pressed in Main Menu
         self.show_order_setup()
 
     def clear_view(self):
@@ -78,10 +77,16 @@ class IntakeModule(ctk.CTkFrame):
         nav_bar = ctk.CTkFrame(left_panel, height=50, fg_color="transparent"); nav_bar.pack(fill="x")
         ctk.CTkButton(nav_bar, text="← General Info", width=120, command=self.show_order_setup).pack(side="left")
         
-        self.scan_var = ctk.StringVar(); self.scan_var.trace_add("write", self.live_search)
+        # REMOVED the buggy trace_add("write", ...) from here
+        self.scan_var = ctk.StringVar()
+        
         ctk.CTkLabel(left_panel, text="SCAN QR / BARCODE", font=("Arial", 16, "bold")).pack(pady=(15,0))
         self.barcode_entry = ctk.CTkEntry(left_panel, textvariable=self.scan_var, width=500, height=50, font=("Arial", 22))
         self.barcode_entry.pack(pady=10); self.barcode_entry.focus()
+        
+        # FIXED: Only search the database when the Enter key is pressed
+        self.barcode_entry.bind('<Return>', self.live_search)
+
         self.status_note = ctk.CTkLabel(left_panel, text="Waiting for scan...", font=("Arial", 14)); self.status_note.pack()
         
         self.form_details_frame = ctk.CTkFrame(left_panel); self.form_details_frame.pack(pady=10, fill="both", expand=True)
@@ -102,6 +107,7 @@ class IntakeModule(ctk.CTkFrame):
 
     def setup_product_fields(self):
         self.prod_entries = {}
+        # FIXED: Changed "Selling Price (Optional)" to "Selling Price *"
         fields = ["Name *", "Shade *", "Brand *", "Quantity *", "Weight (g) *", "Selling Price *"]
         fields.append(f"Cost ({self.order_meta['Currency *']}) *" if self.source_type == "Global" else "Cost (EGP) *")
         for f in fields:
@@ -111,7 +117,8 @@ class IntakeModule(ctk.CTkFrame):
 
     def live_search(self, *args):
         barcode = self.scan_var.get().strip()
-        if len(barcode) > 5 and not self.is_editing:
+        # FIXED: Only checks the database if the box actually has characters after hitting enter
+        if len(barcode) > 0 and not self.is_editing:
             doc = db.collection("products").document(barcode).get()
             if doc.exists:
                 self.autofill_master_data(doc.to_dict())
@@ -180,19 +187,36 @@ class IntakeModule(ctk.CTkFrame):
             sn, cn = self.order_meta['Supplier Name *'].replace(" ",""), self.order_meta.get('Courier Name *', 'Local').replace(" ","")
             oid = f"{ds}_{sn}_{cn}"
             db.collection("orders_history").document(oid).set({"supplier": sn, "courier": cn, "timestamp": firestore.SERVER_TIMESTAMP, "meta": self.order_meta, "type": self.source_type})
+            
             for item in self.current_order_items:
                 bar = item['Barcode']
                 lc = self.calculate_final_landed_cost(item)
-                update_data = {"name": item['Name *'], "name_lower": item['Name *'].lower(), "shade": item['Shade *'], "brand": item['Brand *'],  "selling_price": float(item['Selling Price *']) , "last_updated": firestore.SERVER_TIMESTAMP}
+                
+                # FIXED: Selling price correctly cast to float and uploaded
+                update_data = {
+                    "name": item['Name *'], 
+                    "name_lower": item['Name *'].lower(), 
+                    "shade": item['Shade *'], 
+                    "brand": item['Brand *'], 
+                    "selling_price": float(item.get('Selling Price *', 0)),
+                    "last_updated": firestore.SERVER_TIMESTAMP
+                }
                 new_weight = float(item.get("Weight (g) *") or 0)
                 if new_weight > 0: update_data["weight_g"] = new_weight
+                
                 db.collection("products").document(bar).set(update_data, merge=True)
                 db.collection("batches").add({"barcode": bar, "order_id": oid, "landed_cost_egp": lc, "qty_initial": int(item['Quantity *']), "qty_remaining": int(item['Quantity *']), "timestamp": firestore.SERVER_TIMESTAMP})
+            
             self.controller.show_main_menu()
-        except Exception as e: self.finish_btn.configure(state="normal", text="RETRY COMMIT"); print(e)
+            if hasattr(self.controller, 'show_error_popup'):
+                self.controller.show_error_popup("Intake Order Committed Successfully!")
+        except Exception as e: 
+            self.finish_btn.configure(state="normal", text="RETRY COMMIT")
+            print(e)
 
     def autofill_master_data(self, data):
-        mapping = {"Name *": "name", "Shade *": "shade", "Brand *": "brand", "Weight (g) *": "weight_g"}
+        # FIXED: Properly autofills the selling price if the product already exists
+        mapping = {"Name *": "name", "Shade *": "shade", "Brand *": "brand", "Weight (g) *": "weight_g", "Selling Price *": "selling_price"}
         for ui, db_key in mapping.items():
             if ui in self.prod_entries:
                 self.prod_entries[ui].delete(0, 'end')
