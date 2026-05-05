@@ -1,0 +1,9 @@
+- if there is an order that client bought 3 items from the same product, then I make a return before completing or RMA after completing, you show me the 3 items at one line, whether all of them returned or defected, I need each item in seperate line, because may be some good and some damaged
+- I don't want the total buisness losses to be in one field, I want to seperate them
+
+
+- I want to be able end month statement and generate PDF that has all the history of the month, and start new month
+- view month or overall year status till now, so per month, per year
+- Expenses (create multifields and show them in drop down menu or create new field)
+
+
